@@ -1,0 +1,76 @@
+name: Build and validate Comp29
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCOMP29_BUILD_TESTS=ON -DCOMP29_BUILD_HOST_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel 3
+      - name: Validate on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ctest --test-dir build -C Release --output-on-failure --timeout 120
+      - name: Validate on macOS and Windows
+        if: runner.os != 'Linux'
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 120
+      - name: Validate Audio Unit
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto build/Comp29_artefacts/Release/AU/Comp29.component "$HOME/Library/Audio/Plug-Ins/Components/Comp29.component"
+          auval -v aufx C029 Cp29
+      - name: Package native test installation
+        run: cpack --config build/CPackConfig.cmake -C Release
+      - name: Test Linux package install and uninstall
+        if: runner.os == 'Linux'
+        run: python3 packaging/test_linux_install.py --archive build/packages/*.tar.gz --host-test build/Comp29HostTests_artefacts/Release/Comp29HostTests
+      - name: Save test-install packages and UI snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Comp29-${{ runner.os }}
+          compression-level: 0
+          path: |
+            build/packages/*.tar.gz
+            build/packages/*.zip
+            build/packages/*.sha256
+            build/ui-snapshots/
+      - name: Publish tagged test release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Another matrix job may create this same release concurrently.
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --prerelease --title "Comp29 $RELEASE_TAG - test build" \
+              --notes-file docs/RELEASE_NOTES.md \
+              || gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+          shopt -s nullglob
+          assets=(build/packages/*.tar.gz build/packages/*.zip build/packages/*.sha256)
+          ((${#assets[@]} > 0)) || { echo "No test-install packages found" >&2; exit 1; }
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            gh release upload "$RELEASE_TAG" docs/INSTALL.md --clobber --repo "$GITHUB_REPOSITORY"
+          fi

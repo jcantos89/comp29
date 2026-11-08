@@ -1,0 +1,39 @@
+# Shared helpers for the Comp29 Linux test package. Sourced by its two scripts.
+comp29_error() { printf 'Comp29: %s\n' "$*" >&2; exit 1; }
+comp29_usage() {
+    printf '%s\n' "Usage: $0 [--vst3-dir DIRECTORY] [--bin-dir DIRECTORY]" \
+        "Defaults: \$HOME/.vst3 and \$HOME/.local/bin. No sudo required."
+}
+comp29_paths() {
+    vst3_dir="$HOME/.vst3"
+    bin_dir="$HOME/.local/bin"
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --vst3-dir|--bin-dir)
+                [ "$#" -ge 2 ] || comp29_error "Missing directory after $1"
+                [ -n "$2" ] || comp29_error "Directory must not be empty"
+                if [ "$1" = --vst3-dir ]; then vst3_dir=$2; else bin_dir=$2; fi
+                shift 2 ;;
+            --help|-h) comp29_usage; exit 0 ;;
+            *) comp29_usage >&2; comp29_error "Unknown option: $1" ;;
+        esac
+    done
+    vst3_dir=$(realpath -m -- "$vst3_dir")
+    bin_dir=$(realpath -m -- "$bin_dir")
+    plugin_target="$vst3_dir/Comp29.vst3"
+    binary_target="$bin_dir/comp29"
+    for target in "$plugin_target" "$binary_target"; do
+        case "$target/" in "$package_dir/"*) comp29_error "Destination must be outside the extracted package" ;; esac
+        case "$package_dir/" in "$target/"*) comp29_error "Destination must not contain the extracted package" ;; esac
+    done
+    case "$bin_dir/" in "$plugin_target/"*) comp29_error "Binary directory must not be inside the plugin bundle" ;; esac
+}
+comp29_verify_package() {
+    [ "$(uname -s)" = Linux ] || comp29_error "This installer is for Linux only; see INSTALL.md for your OS"
+    actual_arch=$(uname -m)
+    case "$actual_arch" in amd64) actual_arch=x86_64 ;; arm64) actual_arch=aarch64 ;; esac
+    [ "$actual_arch" = '@COMP29_PACKAGE_ARCH@' ] || comp29_error "This package needs @COMP29_PACKAGE_ARCH@; this machine is $actual_arch"
+    [ -d "$package_dir/VST3/Comp29.vst3" ] && [ -f "$package_dir/Standalone/Comp29" ] || comp29_error "Incomplete package; extract the full archive"
+    [ -f "$package_dir/SHA256SUMS" ] || comp29_error "Missing package checksums"
+    (cd "$package_dir" && sha256sum --quiet -c SHA256SUMS) || comp29_error "Checksum verification failed; no installation files were changed"
+}

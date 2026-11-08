@@ -1,0 +1,65 @@
+# Portable test-install payload. CPack stages it without installing on this host.
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" COMP29_PACKAGE_ARCH)
+if(COMP29_PACKAGE_ARCH MATCHES "^(amd64|x64)$")
+    set(COMP29_PACKAGE_ARCH x86_64)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND COMP29_PACKAGE_ARCH STREQUAL "arm64")
+    set(COMP29_PACKAGE_ARCH aarch64)
+endif()
+if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES ";")
+    set(COMP29_PACKAGE_ARCH universal2)
+endif()
+get_target_property(COMP29_JUCE_MODULE_PATH juce::juce_core INTERFACE_JUCE_MODULE_PATH)
+get_filename_component(COMP29_JUCE_ROOT "${COMP29_JUCE_MODULE_PATH}" DIRECTORY)
+if(NOT EXISTS "${COMP29_JUCE_ROOT}/modules/juce_core/juce_core.h" OR NOT EXISTS "${COMP29_JUCE_ROOT}/LICENSE.md")
+    message(FATAL_ERROR "Cannot locate the JUCE source checkout for reproducible test packages")
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(DIRECTORY "$<GENEX_EVAL:$<TARGET_PROPERTY:Comp29_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>" DESTINATION VST3 COMPONENT Comp29Test
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+        DIRECTORY_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux-common.sh.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/packaging/linux-common.sh" @ONLY)
+    install(PROGRAMS packaging/install-linux.sh packaging/uninstall-linux.sh DESTINATION . COMPONENT Comp29Test)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/linux-common.sh" DESTINATION . COMPONENT Comp29Test)
+else()
+    install(DIRECTORY "$<GENEX_EVAL:$<TARGET_PROPERTY:Comp29_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>"
+        DESTINATION VST3 COMPONENT Comp29Test USE_SOURCE_PERMISSIONS)
+endif()
+if(APPLE)
+    install(DIRECTORY "$<TARGET_BUNDLE_DIR:Comp29_Standalone>" DESTINATION Standalone COMPONENT Comp29Test USE_SOURCE_PERMISSIONS)
+    install(DIRECTORY "$<GENEX_EVAL:$<TARGET_PROPERTY:Comp29_AU,JUCE_PLUGIN_ARTEFACT_FILE>>" DESTINATION AU COMPONENT Comp29Test USE_SOURCE_PERMISSIONS)
+else()
+    install(PROGRAMS "$<TARGET_FILE:Comp29_Standalone>" DESTINATION Standalone COMPONENT Comp29Test)
+endif()
+install(FILES docs/INSTALL.md DESTINATION . COMPONENT Comp29Test RENAME INSTALL.md)
+install(FILES docs/INSTALL.md DESTINATION . COMPONENT Comp29Test RENAME README.md)
+install(FILES LICENSE docs/VALIDATION.md DESTINATION . COMPONENT Comp29Test)
+install(FILES "${COMP29_JUCE_ROOT}/LICENSE.md" DESTINATION licenses COMPONENT Comp29Test RENAME JUCE-LICENSE.md)
+# Include the matching project and JUCE source (including third-party notices),
+# so test packages are reproducible offline without shipping Git metadata/caches.
+install(FILES CMakeLists.txt README.md LICENSE .gitignore DESTINATION source/Comp29 COMPONENT Comp29Test)
+install(DIRECTORY Source Tests docs packaging .github DESTINATION source/Comp29 COMPONENT Comp29Test USE_SOURCE_PERMISSIONS
+    PATTERN "__pycache__" EXCLUDE)
+install(DIRECTORY "${COMP29_JUCE_ROOT}/" DESTINATION source/JUCE COMPONENT Comp29Test USE_SOURCE_PERMISSIONS
+    PATTERN ".git" EXCLUDE)
+
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/VerifyPackage.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/packaging/VerifyPackage.cmake" @ONLY)
+set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};Comp29;Comp29Test;/")
+set(CPACK_PACKAGE_NAME Comp29)
+set(CPACK_PACKAGE_VENDOR "Comp29 Audio")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "Comp29-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${COMP29_PACKAGE_ARCH}")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/packages")
+set(CPACK_PACKAGE_CHECKSUM SHA256)
+set(CPACK_BUILD_CONFIG Release)
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+set(CPACK_ARCHIVE_THREADS 2)
+set(CPACK_PRE_BUILD_SCRIPTS "${CMAKE_CURRENT_BINARY_DIR}/packaging/VerifyPackage.cmake")
+if(WIN32)
+    set(CPACK_GENERATOR ZIP)
+else()
+    set(CPACK_GENERATOR TGZ)
+endif()
+include(CPack)

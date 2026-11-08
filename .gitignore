@@ -1,0 +1,9 @@
+/build*/
+/.cache/
+/.idea/
+/.vs/
+/.vscode/
+.DS_Store
+Thumbs.db
+/dist/
+__pycache__/
